@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>企業財務分析</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+    header { background: #1a1a2e; color: white; padding: 1rem 2rem; }
+    header h1 { font-size: 1.2rem; font-weight: 500; }
+    main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    .card { background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    label { font-size: 13px; color: #666; display: block; margin-bottom: 6px; }
+    input, select { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    .ticker-row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .ticker-row input { flex: 1; }
+    .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    .btn-primary { background: #1a1a2e; color: white; width: 100%; margin-top: 1rem; padding: 10px; }
+    .btn-add { background: #eee; color: #333; }
+    .btn-primary:hover { background: #2d2d5e; }
+    .btn-add:hover { background: #ddd; }
+    #error { color: #c0392b; font-size: 13px; margin-top: 8px; display: none; }
+    #chart-area { display: none; }
+    #loading { text-align: center; color: #888; padding: 2rem; display: none; }
+  </style>
+</head>
+<body>
+  <header><h1>企業財務分析プラットフォーム</h1></header>
+  <main>
+    <div class="card">
+      <label>企業ティッカーシンボル（例：AAPL、MSFT、TSLA）</label>
+      <div id="ticker-inputs">
+        <div class="ticker-row"><input type="text" placeholder="NVDA" class="ticker" value="NVDA"></div>
+        <div class="ticker-row"><input type="text" placeholder="AMD" class="ticker" value="AMD"></div>
+      </div>
+      <button class="btn btn-add" onclick="addTicker()">＋ 企業を追加</button>
+
+      <label style="margin-top: 1rem;">財務指標</label>
+      <select id="metric">
+        <option>売上高</option>
+        <option>純利益</option>
+        <option>営業利益</option>
+        <option>R&D費用</option>
+      </select>
+
+      <button class="btn btn-primary" onclick="analyze()">分析する</button>
+      <div id="error"></div>
+    </div>
+
+    <div id="loading">データを取得中...</div>
+
+    <div id="chart-area" class="card">
+      <h2 id="chart-title" style="font-size: 15px; font-weight: 500; margin-bottom: 1rem;"></h2>
+      <div style="position: relative; height: 350px;">
+        <canvas id="myChart" role="img" aria-label="財務データ比較グラフ"></canvas>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const COLORS = ['#2980b9','#e74c3c','#27ae60','#f39c12','#8e44ad'];
+
+    function addTicker() {
+      const div = document.createElement('div');
+      div.className = 'ticker-row';
+      div.innerHTML = '<input type="text" placeholder="INTC" class="ticker">';
+      document.getElementById('ticker-inputs').appendChild(div);
+    }
+
+    let chart = null;
+
+    async function analyze() {
+      const tickers = [...document.querySelectorAll('.ticker')]
+        .map(i => i.value.trim().toUpperCase())
+        .filter(v => v);
+      const metric = document.getElementById('metric').value;
+      const errEl = document.getElementById('error');
+      errEl.style.display = 'none';
+
+      if (tickers.length === 0) { errEl.textContent = '企業を1社以上入力してください'; errEl.style.display = 'block'; return; }
+
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('chart-area').style.display = 'none';
+
+      try {
+        const res = await fetch('/api/compare', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tickers, metric })
+        });
+        const json = await res.json();
+
+        if (!json.companies || json.companies.length === 0) {
+          errEl.textContent = '該当する企業が見つかりませんでした';
+          errEl.style.display = 'block';
+          return;
+        }
+
+        const allYears = [...new Set(json.companies.flatMap(c => c.data.map(d => d.year)))].sort();
+        const datasets = json.companies.map((c, i) => ({
+          label: `${c.name} (${c.ticker})`,
+          data: allYears.map(y => { const d = c.data.find(r => r.year === y); return d ? d.value : null; }),
+          borderColor: COLORS[i % COLORS.length],
+          backgroundColor: COLORS[i % COLORS.length] + '22',
+          tension: 0.3,
+          spanGaps: true,
+        }));
+
+        document.getElementById('chart-title').textContent = metric + '比較（億ドル）';
+        document.getElementById('chart-area').style.display = 'block';
+
+        if (chart) chart.destroy();
+        chart = new Chart(document.getElementById('myChart'), {
+          type: 'line',
+          data: { labels: allYears, datasets },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom' } },
+            scales: { y: { beginAtZero: false } }
+          }
+        });
+      } catch(e) {
+        errEl.textContent = 'エラーが発生しました: ' + e.message;
+        errEl.style.display = 'block';
+      } finally {
+        document.getElementById('loading').style.display = 'none';
+      }
+    }
+  </script>
+</body>
+</html>
